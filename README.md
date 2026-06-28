@@ -234,7 +234,7 @@ Além disso, operações morfológicas ajudam a diminuir o vazamento de luz entr
 
 # 👨‍💻 Autor
 
-**Junior Pedro**
+**Junior Co**
 
 Estudante de Engenharia de Computação.
 
