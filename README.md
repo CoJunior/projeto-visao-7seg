@@ -108,7 +108,7 @@ projeto-visao-7seg/
 ├── images/
 │   ├── gabarito_inspecao.png
 │   ├── mqttx.png
-│   ├── sistema_circular_modelo_2.png
+│   ├── modelo2.png
 │   └── sistema_qa.png
 │
 ├── comunicacao_mqtt.py
