@@ -1,11 +1,10 @@
-
-
+    
 import cv2
 import numpy as np
 from collections import deque
 import time
 
-# Importa o módulo MQTT que criamos no outro arquivo
+# Importa o módulo MQTT
 from comunicacao_mqtt import TransmissorMQTT
 
 # --- CONFIGURAÇÕES DA CÂMERA E TELA ---
@@ -16,11 +15,9 @@ ROI_W = 560
 ROI_H = 260
 MOSTRAR_ROIS = True
 
-# --- LIMIARES DE DETECÇÃO ---
 LIMIAR_AZUL = 0.45  
 LIMIAR_ICONE = 15  
 
-# --- HISTÓRICO INDIVIDUALIZADO ---
 HIST_SIZE = 2  
 hist_D1 = deque(maxlen=HIST_SIZE)
 hist_D2 = deque(maxlen=HIST_SIZE)
@@ -105,7 +102,7 @@ cap = abrir_camera()
 mqtt_app = TransmissorMQTT()
 mqtt_app.iniciar_conexao()
 
-print("\n--- SISTEMA DE INSPEÇÃO QA (MODULARIZADO) ---")
+print("\n--- SISTEMA DE INSPEÇÃO QA MULTI-MODELO ---")
 print("Pressione 'q' na janela do vídeo para encerrar.")
 
 while True:
@@ -121,99 +118,173 @@ while True:
         continue
 
     frame = cv2.flip(frame, -1)
-    h_frame, w_frame = frame.shape[:2]
-    x_roi = (w_frame - ROI_W) // 2
-    y_roi = (h_frame - ROI_H) // 2
     
-    cv2.rectangle(frame, (x_roi, y_roi), (x_roi + ROI_W, y_roi + ROI_H), (255, 255, 255), 2)
-    painel = frame[y_roi:y_roi + ROI_H, x_roi:x_roi + ROI_W].copy()
-
-    hsv_painel = cv2.cvtColor(painel, cv2.COLOR_BGR2HSV)
-    mask_blue = criar_mascara_azul(hsv_painel)
-    mask_red = criar_mascara_vermelha(hsv_painel)
-
-    digitos = {
-        "D1": (120, 80, 75, 120),
-        "D2": (225, 80, 75, 120),
-        "D3": (315, 80, 75, 120),
-    }
-
-    roi_bateria = (430, 60, 60, 50)
-    roi_floco = (430, 150, 60, 50)
-
-    # Lógica Floco
-    intensidade_floco = intensidade_roi(mask_blue, roi_floco)
-    floco_estavel = media_estavel(hist_floco, intensidade_floco)
-    estado_floco, cor_floco = ("LIGADO", (255, 255, 0)) if floco_estavel > LIMIAR_ICONE else ("APAGADO", (200, 200, 200))
-
-    # Anti-Bleeding (Erosão) e Zonas Cegas
-    mask_blue_digits = mask_blue.copy()
-    kernel_erosao = np.ones((3, 3), np.uint8)
-    mask_blue_digits = cv2.erode(mask_blue_digits, kernel_erosao, iterations=2)
-    mask_blue_digits[:, 195:220] = 0  
-    mask_blue_digits[:, 390:560] = 0 
-
-    textos_d = {}
-    cores_d = {}
+    # =========================================================================
+    #                      ROTEADOR DE MODELOS
+    # =========================================================================
     
-    # Dicionário temporário para repassar ao MQTT
-    status_para_mqtt = {}
+    # ------------------ MODELO 1 
+    if mqtt_app.modo_operacao == 1:
+        h_frame, w_frame = frame.shape[:2]
+        x_roi = (w_frame - ROI_W) // 2
+        y_roi = (h_frame - ROI_H) // 2
+        
+        cv2.rectangle(frame, (x_roi, y_roi), (x_roi + ROI_W, y_roi + ROI_H), (255, 255, 255), 2)
+        painel = frame[y_roi:y_roi + ROI_H, x_roi:x_roi + ROI_W].copy()
 
-    for nome, roi_digito in digitos.items():
-        status, rois_seg = verificar_segmentos(mask_blue_digits, roi_digito)
-        status_para_mqtt[nome] = status 
-        
-        ligados = [s for s, v in status.items() if v == "ON"]
-        apagados = [s for s, v in status.items() if v == "OFF"]
-        qtd_ligados = len(ligados)
-        
-        estavel = media_estavel(eval(f"hist_{nome}"), qtd_ligados)
+        hsv_painel = cv2.cvtColor(painel, cv2.COLOR_BGR2HSV)
+        mask_blue = criar_mascara_azul(hsv_painel)
+        mask_red = criar_mascara_vermelha(hsv_painel)
+
+        digitos = {
+            "D1": (120, 80, 75, 120),
+            "D2": (225, 80, 75, 120),
+            "D3": (315, 80, 75, 120),
+        }
+
+        roi_bateria = (430, 60, 60, 50)
+        roi_floco = (430, 150, 60, 50)
+
+        # Lógica Floco
+        intensidade_floco = intensidade_roi(mask_blue, roi_floco)
+        floco_estavel = media_estavel(hist_floco, intensidade_floco)
+        estado_floco, cor_floco = ("LIGADO", (255, 255, 0)) if floco_estavel > LIMIAR_ICONE else ("APAGADO", (200, 200, 200))
+
+        # Anti-Bleeding (Erosão) e Zonas Cegas
+        mask_blue_digits = mask_blue.copy()
+        kernel_erosao = np.ones((3, 3), np.uint8)
+        mask_blue_digits = cv2.erode(mask_blue_digits, kernel_erosao, iterations=2)
+        mask_blue_digits[:, 195:220] = 0  
+        mask_blue_digits[:, 390:560] = 0 
+
+        textos_d = {}
+        cores_d = {}
+        status_para_mqtt = {}
+
+        for nome, roi_digito in digitos.items():
+            status, rois_seg = verificar_segmentos(mask_blue_digits, roi_digito)
+            status_para_mqtt[nome] = status 
             
-        if estavel == 7:
-            textos_d[nome] = f"{nome}: TODOS ACESOS (OK)"
-            cores_d[nome] = (0, 255, 0)
-        elif estavel == 0:
-            textos_d[nome] = f"{nome}: APAGADO (OFF)"
-            cores_d[nome] = (0, 255, 255) 
-        else:
-            str_on = ",".join(ligados) if ligados else "-"
-            str_off = ",".join(apagados) if apagados else "-"
-            textos_d[nome] = f"{nome}: ON [{str_on}] | QUEIMADOS: [{str_off}]"
-            cores_d[nome] = (0, 0, 255)
+            ligados = [s for s, v in status.items() if v == "ON"]
+            apagados = [s for s, v in status.items() if v == "OFF"]
+            qtd_ligados = len(ligados)
+            
+            estavel = media_estavel(eval(f"hist_{nome}"), qtd_ligados)
+                
+            if estavel == 7:
+                textos_d[nome] = f"{nome}: TODOS ACESOS (OK)"
+                cores_d[nome] = (0, 255, 0)
+            elif estavel == 0:
+                textos_d[nome] = f"{nome}: APAGADO (OFF)"
+                cores_d[nome] = (0, 255, 255) 
+            else:
+                str_on = ",".join(ligados) if ligados else "-"
+                str_off = ",".join(apagados) if apagados else "-"
+                textos_d[nome] = f"{nome}: ON [{str_on}] | QUEIMADOS: [{str_off}]"
+                cores_d[nome] = (0, 0, 255)
 
+            if MOSTRAR_ROIS:
+                desenhar_rois_segmentos(painel, rois_seg, status)
+                x, y, w, h = roi_digito
+                cv2.rectangle(painel, (x, y), (x + w, y + h), (255, 255, 255), 1)
+                cv2.putText(painel, f"{nome}: {estavel}/7", (x - 5, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, cores_d[nome], 2)
+
+        # Lógica Bateria
+        intensidade_bateria = intensidade_roi(mask_red, roi_bateria)
+        bateria_estavel = media_estavel(hist_bateria, intensidade_bateria)
+        estado_bateria, cor_bateria = ("LIGADA", (0, 0, 255)) if bateria_estavel > LIMIAR_ICONE else ("APAGADA", (200, 200, 200))
+
+        # Envio MQTT (Chamando a nova função genérica)
+        dados_modelo_1 = {
+            "Displays": status_para_mqtt,
+            "Icones": {"Floco": estado_floco, "Bateria": estado_bateria}
+        }
+        mqtt_app.publicar_dados_genericos(dados_modelo_1)
+
+        # Interface Visual
         if MOSTRAR_ROIS:
-            desenhar_rois_segmentos(painel, rois_seg, status)
-            x, y, w, h = roi_digito
-            cv2.rectangle(painel, (x, y), (x + w, y + h), (255, 255, 255), 1)
-            cv2.putText(painel, f"{nome}: {estavel}/7", (x - 5, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, cores_d[nome], 2)
+            for nome, roi_aux, cor in [("BATERIA", roi_bateria, cor_bateria), ("FLOCO", roi_floco, cor_floco)]:
+                x, y, w, h = roi_aux
+                cv2.rectangle(painel, (x, y), (x + w, y + h), cor, 2)
+                cv2.putText(painel, nome, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, cor, 1)
 
-    # Lógica Bateria
-    intensidade_bateria = intensidade_roi(mask_red, roi_bateria)
-    bateria_estavel = media_estavel(hist_bateria, intensidade_bateria)
-    estado_bateria, cor_bateria = ("LIGADA", (0, 0, 255)) if bateria_estavel > LIMIAR_ICONE else ("APAGADA", (200, 200, 200))
+        cv2.putText(frame, "STATUS DOS DIGITOS:", (x_roi, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(frame, textos_d["D1"], (x_roi, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cores_d["D1"], 2)
+        cv2.putText(frame, textos_d["D2"], (x_roi, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cores_d["D2"], 2)
+        cv2.putText(frame, textos_d["D3"], (x_roi, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cores_d["D3"], 2)
+        cv2.putText(frame, "ALINHE A PLACA (MIRA) AQUI DENTRO", (x_roi, y_roi - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        y_bottom = y_roi + ROI_H + 25 
+        cv2.putText(frame, f"FLOCO: {estado_floco}", (x_roi, y_bottom), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor_floco, 2)
+        cv2.putText(frame, f"BATERIA: {estado_bateria}", (x_roi + 250, y_bottom), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor_bateria, 2)
 
-    # --- ENVIO DOS DADOS (Chamando o módulo modularizado) ---
-    mqtt_app.publicar_status(status_para_mqtt, estado_floco, estado_bateria)
+        # Exibe as janelas originais
+        cv2.imshow("Sistema QA - Camera", frame)
+        cv2.imshow("Gabarito de Inspecao (Alinhado)", painel)
 
-    # Interface Visual
-    if MOSTRAR_ROIS:
-        for nome, roi_aux, cor in [("BATERIA", roi_bateria, cor_bateria), ("FLOCO", roi_floco, cor_floco)]:
-            x, y, w, h = roi_aux
-            cv2.rectangle(painel, (x, y), (x + w, y + h), cor, 2)
-            cv2.putText(painel, nome, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, cor, 1)
+    # MODELO 2 (PLACA CIRCULAR) 
+    elif mqtt_app.modo_operacao == 2:
+        # Se trocar de modo, fecha a janelinha do gabarito para não ficar travada na tela
+        try: cv2.destroyWindow("Gabarito de Inspecao (Alinhado)")
+        except: pass
 
-    cv2.putText(frame, "STATUS DOS DIGITOS:", (x_roi, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    cv2.putText(frame, textos_d["D1"], (x_roi, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cores_d["D1"], 2)
-    cv2.putText(frame, textos_d["D2"], (x_roi, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cores_d["D2"], 2)
-    cv2.putText(frame, textos_d["D3"], (x_roi, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cores_d["D3"], 2)
-    cv2.putText(frame, "ALINHE A PLACA (MIRA) AQUI DENTRO", (x_roi, y_roi - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    
-    y_bottom = y_roi + ROI_H + 25 
-    cv2.putText(frame, f"FLOCO: {estado_floco}", (x_roi, y_bottom), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor_floco, 2)
-    cv2.putText(frame, f"BATERIA: {estado_bateria}", (x_roi + 250, y_bottom), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor_bateria, 2)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    cv2.imshow("Sistema QA - Camera", frame)
-    cv2.imshow("Gabarito de Inspecao (Alinhado)", painel)
+        # Máscaras de Cor
+        lower_red1, upper_red1 = np.array([0, 100, 100]), np.array([10, 255, 255])
+        lower_red2, upper_red2 = np.array([160, 100, 100]), np.array([180, 255, 255])
+        mask_red = cv2.bitwise_or(cv2.inRange(hsv, lower_red1, upper_red1), cv2.inRange(hsv, lower_red2, upper_red2))
+
+        lower_yellow, upper_yellow = np.array([15, 80, 150]), np.array([40, 255, 255])
+        mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
+
+        kernel = np.ones((5, 5), np.uint8)
+        mask_red = cv2.morphologyEx(mask_red, cv2.MORPH_OPEN, kernel)
+        mask_yellow = cv2.morphologyEx(mask_yellow, cv2.MORPH_OPEN, kernel)
+
+        # Contornos
+        contornos_vermelhos, _ = cv2.findContours(mask_red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contornos_amarelos, _ = cv2.findContours(mask_yellow, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        qtd_leds_internos = 0
+        qtd_leds_externos = 0
+
+        for cnt in contornos_vermelhos:
+            area = cv2.contourArea(cnt)
+            if 20 < area < 1000:
+                qtd_leds_internos += 1
+                x, y, w, h = cv2.boundingRect(cnt)
+                cv2.circle(frame, (x + w//2, y + h//2), max(w, h)//2 + 5, (0, 0, 255), 2)
+
+        for cnt in contornos_amarelos:
+            area = cv2.contourArea(cnt)
+            if 20 < area < 1000:
+                qtd_leds_externos += 1
+                x, y, w, h = cv2.boundingRect(cnt)
+                cv2.circle(frame, (x + w//2, y + h//2), max(w, h)//2 + 5, (0, 255, 255), 2)
+
+        status_interno = "LIGADO" if qtd_leds_internos >= 3 else "APAGADO"
+        status_externo = "LIGADO" if qtd_leds_externos >= 9 else "APAGADO"
+
+        # Interface Visual
+        cv2.putText(frame, "MODO 2: PLACA CIRCULAR", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        
+        cor_int = (0, 0, 255) if status_interno == "LIGADO" else (100, 100, 100)
+        cv2.putText(frame, f"Anel Interno (Vermelhos): {qtd_leds_internos} -> {status_interno}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor_int, 2)
+        
+        cor_ext = (0, 255, 255) if status_externo == "LIGADO" else (100, 100, 100)
+        cv2.putText(frame, f"Anel Externo (Amarelos): {qtd_leds_externos} -> {status_externo}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor_ext, 2)
+
+        # Envio MQTT
+        dados_modelo_2 = {
+            "Anel_Interno": status_interno,
+            "Anel_Externo": status_externo,
+            "Contagem_Vermelhos": qtd_leds_internos,
+            "Contagem_Amarelos": qtd_leds_externos
+        }
+        mqtt_app.publicar_dados_genericos(dados_modelo_2)
+
+        cv2.imshow("Sistema QA - Camera", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
@@ -222,9 +293,3 @@ while True:
 mqtt_app.encerrar()
 cap.release()
 cv2.destroyAllWindows()
-
-    
-    
-    
-    
-  
