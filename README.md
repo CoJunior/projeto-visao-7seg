@@ -57,7 +57,7 @@ Cada retângulo pequeno corresponde a um dos sete segmentos do display. Isso tam
 Depois do primeiro modelo, também foi adicionada uma segunda forma de inspeção para uma placa circular.
 
 <p align="center">
-  <img src="images/sistema_circular_modelo_2.png" width="75%" alt="Sistema de inspeção - Modelo 2">
+  <img src="images/modelo2.png" width="75%" alt="Sistema de inspeção - Modelo 2">
 </p>
 
 Nesse modelo o programa procura LEDs de duas cores:
@@ -68,7 +68,6 @@ Nesse modelo o programa procura LEDs de duas cores:
 Os LEDs vermelhos são usados para verificar o anel interno e os amarelos para o anel externo.
 
 Além de mostrar o resultado na tela, o programa também conta quantos LEDs de cada cor foram encontrados.
-
 ---
 
 # 🧠 Como funciona
